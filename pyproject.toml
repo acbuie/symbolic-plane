@@ -1,0 +1,43 @@
+[tool.poetry]
+name = "symbolic-plane-analysis"
+version = "0.1.0"
+description = ""
+authors = ["acbuie <aidancbuie@gmail.com>"]
+readme = "README.md"
+packages = [{include = "symbolic_plane_analysis", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+shapely = "^2.0.1"
+polars = {extras = ["numpy", "pandas"], version = "^0.19.6"}
+geopandas = "^0.14.0"
+rich = "^13.6.0"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.0.290"
+black = "^23.9.1"
+mypy = "^1.5.1"
+pytest = "^7.4.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+cli = "symbolic_plane_analysis.main:main"
+
+[tool.black]
+target-version = ["py311"]
+
+[tool.mypy]
+pretty = true
+strict = true
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 88
+select = ["D", "E", "F", "I", "N", "W"]
+# Google docstring style
+ignore = ["D105", "D107", "D203", "D204", "D213", "D215", "D400", "D404", "D406", "D407", "D408", "D409", "D413"]
+unfixable = ["F401", "F841"]
+
