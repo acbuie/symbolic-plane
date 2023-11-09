@@ -14,10 +14,10 @@ geopandas = "^0.14.0"
 rich = "^13.6.0"
 
 [tool.poetry.group.dev.dependencies]
-ruff = "^0.0.290"
-black = "^23.9.1"
+ruff = "^0.1.4"
 mypy = "^1.5.1"
 pytest = "^7.4.2"
+pre-commit = "^3.5.0"
 
 [build-system]
 requires = ["poetry-core"]
@@ -30,14 +30,18 @@ cli = "symbolic_plane_analysis.main:main"
 target-version = ["py311"]
 
 [tool.mypy]
-pretty = true
 strict = true
+
+[[tool.mypy.overrides]]
+module = ["shapely", "geopandas"]
 ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 88
-select = ["D", "E", "F", "I", "N", "W"]
-# Google docstring style
-ignore = ["D105", "D107", "D203", "D204", "D213", "D215", "D400", "D404", "D406", "D407", "D408", "D409", "D413"]
-unfixable = ["F401", "F841"]
 
+[tool.ruff.lint]
+select = ["D", "E", "F", "I", "N", "W"]
+# Google docstring style, as well as recommended ignores when using as a formatter
+ignore = ["D105", "D107", "D203", "D204", "D213", "D215", "D400", "D404", "D406", "D407", "D408", "D409", "D413", "W191", "E111", "E114", "E117"]
+fixable = ["ALL"]
+unfixable = ["F401", "F841"]
