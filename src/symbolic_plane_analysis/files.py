@@ -1,8 +1,8 @@
 """Functions for finding and manipulating data locations."""
-import pathlib
+from pathlib import Path
 
 
-def parse_user_path(file_path: str) -> pathlib.Path:
+def parse_path(file_path: str) -> Path:
     """Convert a string to a Path, while also checking that the Path exists.
 
     Args:
@@ -14,7 +14,7 @@ def parse_user_path(file_path: str) -> pathlib.Path:
     Raises:
         ValueError: The supplied path does not exist.
     """
-    path = pathlib.Path(file_path).expanduser().resolve()
+    path = Path(file_path).expanduser().resolve()
 
     if path.exists():
         return path
@@ -23,7 +23,7 @@ def parse_user_path(file_path: str) -> pathlib.Path:
         raise ValueError(f"Supplied path: {path} does not exist.")
 
 
-def find_geojson(directory: str) -> list[pathlib.Path]:
+def find_geojson(directory: str) -> list[Path]:
     """Return a list of geoJSON files in a directory.
 
     Args:
@@ -34,7 +34,7 @@ def find_geojson(directory: str) -> list[pathlib.Path]:
         A list of all geoJSON files in a directory. If there are no files, the list will
         be empty.
     """
-    validated_directory = parse_user_path(directory)
+    validated_directory = parse_path(directory)
     files = [
         file
         for file in validated_directory.iterdir()
@@ -43,10 +43,3 @@ def find_geojson(directory: str) -> list[pathlib.Path]:
     # TODO: log any files found.
 
     return files
-
-
-if __name__ == "__main__":
-    DATA_FOLDER_PATH = parse_user_path(
-        "~/School/Graduate/Projects/Symbolic_Plane_Analysis/line_features/"
-    )
-    print(find_geojson(DATA_FOLDER_PATH))
