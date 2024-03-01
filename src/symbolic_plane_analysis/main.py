@@ -29,6 +29,8 @@ def main() -> None:
         "~/School/Graduate/Projects/Symbolic_Plane_Analysis/geojson/lines/"
     )
     results_dir = Path("~/School/Graduate/Projects/Symbolic_Plane_Analysis/results/")
+    complex_results_dir = results_dir / Path("complex/")
+
     # TODO: Create directories
 
     geojson_files = find_geojson(directory)
@@ -57,13 +59,30 @@ def main() -> None:
                 continue
 
             # Perform node analysis
-            nodes_result = node_analysis.do_analysis(
+            progress.console.log("\tNode...")
+            node_summary_result, node_analysis_result = node_analysis.do_analysis(
                 feature,
                 angle_buffer=ANGLE_BUFFER,
-            ).collect()
-            results.append(nodes_result)
+            )
+            results.append(node_summary_result.collect())
 
             # TODO: Perform polygon analysis
+            progress.console.log("\tCell...")
+
+            # Perform the complex analysis
+            progress.console.log("\tComplex...")
+            complex_analysis = (
+                node_analysis_result.group_by("num_points")
+                .count()
+                .sort("num_points")
+                .collect()
+            )
+            # TODO:
+            # polygon_analysis_result.group_by("num_sides").count().collect()
+
+            complex_analysis.write_csv(
+                complex_results_dir / f"{feature.stem}_complex.csv"
+            )
 
             progress.update(task, advance=1, name=name)
 
