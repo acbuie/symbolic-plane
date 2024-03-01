@@ -2,11 +2,11 @@
 from pathlib import Path
 
 
-def parse_path(file_path: Path) -> Path:
+def parse_path(file_path: str) -> Path:
     """Convert a string to a Path, while also checking that the Path exists.
 
     Args:
-        file_path: A  file path.
+        file_path: A string representing a file path.
 
     Returns:
         A pathlib.Path instance of the file_path, if it exists.
@@ -14,7 +14,7 @@ def parse_path(file_path: Path) -> Path:
     Raises:
         ValueError: The supplied path does not exist.
     """
-    path = file_path.expanduser().resolve()
+    path = Path(file_path).expanduser().resolve()
 
     if path.exists():
         return path
@@ -23,7 +23,7 @@ def parse_path(file_path: Path) -> Path:
         raise ValueError(f"Supplied path: {path} does not exist.")
 
 
-def find_geojson(directory: Path) -> list[Path]:
+def find_geojson(directory: str) -> list[Path]:
     """Return a list of geoJSON files in a directory.
 
     Args:
