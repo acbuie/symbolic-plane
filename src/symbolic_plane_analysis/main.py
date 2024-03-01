@@ -25,8 +25,11 @@ def main() -> None:
     """Script entrypoint."""
     console = Console()
 
-    directory = "~/School/Graduate/Projects/Symbolic_Plane_Analysis/line_features/"
-    results_dir = "~/School/Graduate/Projects/Symbolic_Plane_Analysis/results/"
+    directory = Path(
+        "~/School/Graduate/Projects/Symbolic_Plane_Analysis/geojson/lines/"
+    )
+    results_dir = Path("~/School/Graduate/Projects/Symbolic_Plane_Analysis/results/")
+    # TODO: Create directories
 
     geojson_files = find_geojson(directory)
     tasks = len(geojson_files)
@@ -66,7 +69,7 @@ def main() -> None:
 
     # Compile and save to csv file
     results_df: pl.DataFrame = pl.concat(results)
-    results_df.write_csv(Path(results_dir) / "results.csv")
+    results_df.write_csv(results_dir / "results.csv")
 
     console.log("Results saved to csv")
 
