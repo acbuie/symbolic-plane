@@ -17,7 +17,7 @@ from symbolic_plane_analysis import node_analysis
 from symbolic_plane_analysis.files import find_geojson
 
 # Ister seems to have a hard time. I think it's coordinate system related
-SKIP = ["Ister"]
+SKIP: list[str] = []
 ANGLE_BUFFER = 15
 
 
