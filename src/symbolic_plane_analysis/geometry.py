@@ -57,8 +57,6 @@ def clip_lines_to_points(
         shapely.buffer(point_array, 2, quad_segs=16), columns=["geometry"]
     )
 
-    # BUG: This seems to hang on Ister, which has a different CRS
-    # Clip lines with overlay
     cut_lines: npt.NDArray[shapely.LinearString] = lines_gdf.overlay(
         buffer_gdf
     ).to_numpy()
