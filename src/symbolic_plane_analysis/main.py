@@ -1,7 +1,6 @@
 """Main module."""
 
 
-import time
 from pathlib import Path
 
 import polars as pl
@@ -11,8 +10,6 @@ from rich.progress import (
     MofNCompleteColumn,
     Progress,
     SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
     TimeElapsedColumn,
 )
 
