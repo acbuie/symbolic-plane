@@ -1,4 +1,4 @@
-"""Perform the geometric analysis of the line features."""
+"""Perform the node analysis on the line features."""
 import pathlib
 
 import numpy.typing as npt
@@ -58,8 +58,10 @@ def create_nodes_dataframe(
     coord_df = pl.from_numpy(coords, schema=["x_coord", "y_coord"], orient="row")
     query = (
         coord_df.lazy()
-        .with_columns(pl.count("x_coord").over(["x_coord", "y_coord"]).alias("count"))
-        .filter(pl.col("count") > 2)  # only count nodes with 3 or more lines
+        .with_columns(
+            pl.count("x_coord").over(["x_coord", "y_coord"]).alias("num_coords")
+        )
+        .filter(pl.col("num_coords") > 2)  # only count nodes with 3 or more lines
         .unique()  # drop duplicates
         .with_columns(
             pl.struct(["x_coord", "y_coord"])
@@ -135,10 +137,10 @@ def _create_analysis_dataframe(
             .list.eval(pl.element().round(2), parallel=True)
             .alias("degrees")
         )
-        .with_columns(pl.col("degrees").list.lengths().alias("count"))
+        .with_columns(pl.col("degrees").list.lengths().alias("num_points"))
         .with_columns(  # Classify each node type as X, T, Y, or #
             pl.when(  # X junction
-                (pl.col("count") == 4)
+                (pl.col("num_points") == 4)
                 & (
                     pl.col("degrees")
                     .list.eval(
@@ -150,7 +152,7 @@ def _create_analysis_dataframe(
             )
             .then(pl.lit("X", dtype=pl.Utf8))
             .when(  # T junction
-                (pl.col("count") == 3)
+                (pl.col("num_points") == 3)
                 & (
                     pl.col("degrees")
                     .list.eval(
@@ -165,7 +167,7 @@ def _create_analysis_dataframe(
             )
             .then(pl.lit("T", dtype=pl.Utf8))
             .when(  # Y junction
-                (pl.col("count") == 3)
+                (pl.col("num_points") == 3)
                 & ~(  # Simply negate the T junction calculation
                     pl.col("degrees")
                     .list.eval(
@@ -206,11 +208,11 @@ def _create_analysis_dataframe(
         )
         .with_columns(  # Irregular nodes have "line" running through (180 angle)
             pl.when(pl.col("regularity") == "irregular")
-            .then(pl.col("count") - 1)
-            .otherwise(pl.col("count"))
-            .alias("count")
+            .then(pl.col("num_points") - 1)
+            .otherwise(pl.col("num_points"))
+            .alias("num_points")
         )
-        .select(["geometry", "degrees", "count", "node_type", "regularity"])
+        .select(["geometry", "degrees", "num_points", "node_type", "regularity"])
     )
 
     return node_analysis
@@ -222,8 +224,8 @@ def _create_node_summary_row(
     query = analysis_df.select(
         [
             pl.lit(row_name).alias("terrain"),
-            pl.col("count").mean().round(3).alias("n_bar"),
-            pl.col("count").std().round(3).alias("n_bar_std"),
+            pl.col("num_points").mean().round(3).alias("n_bar"),
+            pl.col("num_points").std().round(3).alias("n_bar_std"),
             (
                 pl.col("node_type").filter(pl.col("node_type") == "T").count()
                 / pl.col("node_type").count()
@@ -272,7 +274,9 @@ def _create_node_summary_row(
     return query
 
 
-def do_analysis(feature_path: pathlib.Path, angle_buffer: int) -> pl.LazyFrame:
+def do_analysis(
+    feature_path: pathlib.Path, angle_buffer: int
+) -> tuple[pl.LazyFrame, pl.LazyFrame]:
     """Perform the node analysis.
 
     Finds valid intersection nodes in a line feature and computes several angle-based
@@ -286,7 +290,9 @@ def do_analysis(feature_path: pathlib.Path, angle_buffer: int) -> pl.LazyFrame:
           degrees.
 
     Returns:
-        A LazyFrame row containing the computed parameters from the line features.
+        A tuple of LazyFrames. The first is the summary lazyframe, where each row
+        contains the computed parameters from the line features. The second lazyframe
+        is the node analysis lazyframe, which is needed for the complex analysis.
     """
     # Read geoJSON and get the intersection nodes
     line_features_array = load_geojson(feature_path)
@@ -306,4 +312,4 @@ def do_analysis(feature_path: pathlib.Path, angle_buffer: int) -> pl.LazyFrame:
         node_analysis_df, angle_buffer, feature_path.stem
     )
 
-    return summary_df
+    return summary_df, node_analysis_df
