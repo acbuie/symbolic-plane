@@ -1,6 +1,7 @@
 """Perform the node analysis on the line features."""
 import pathlib
 
+import numpy as np
 import numpy.typing as npt
 import polars as pl
 import shapely
@@ -55,18 +56,26 @@ def create_nodes_dataframe(
         is contained in at least 3 lines.
     """
     coords = shapely.get_coordinates(linestring_array)
-    coord_df = pl.from_numpy(coords, schema=["x_coord", "y_coord"], orient="row")
+    coord_df = pl.from_numpy(
+        coords, schema=["x_coord", "y_coord"], orient="row"
+    ).select(
+        pl.col("x_coord").round(4),
+        pl.col("y_coord").round(4),
+    )  # Round to 4 digits to fix floating point issues
+
     query = (
         coord_df.lazy()
         .with_columns(
             pl.count("x_coord").over(["x_coord", "y_coord"]).alias("num_coords")
         )
-        .filter(pl.col("num_coords") > 2)  # only count nodes with 3 or more lines
+        .filter(pl.col("num_coords") != 2)  # Omit points with 2 instances
         .unique()  # drop duplicates
         .with_columns(
             pl.struct(["x_coord", "y_coord"])
             .map_elements(
-                lambda struct: shapely.Point(struct["x_coord"], struct["y_coord"])
+                lambda struct: shapely.to_wkt(
+                    shapely.Point(struct["x_coord"], struct["y_coord"])
+                )
             )
             .alias("geometry")
         )
@@ -74,8 +83,111 @@ def create_nodes_dataframe(
     return query
 
 
+def _filter_endpoint_nodes(
+    point: shapely.Point,
+    buffer: shapely.Polygon,
+    lines_array: npt.NDArray[shapely.LineString],
+) -> list[str]:
+    """Filter nodes that are either T/Y intersections or 'dead end' nodes."""
+    intersections = shapely.intersection(buffer, lines_array)
+
+    # Get intersecting lines
+    line_index = np.where(~shapely.is_empty(intersections))
+    intersecting_lines = lines_array[line_index]
+
+    # Return early for invalid nodes
+    if len(intersecting_lines) == 1:
+        return []
+
+    node_point = point.coords[0]
+
+    # Split intersecting lines at point
+    exploded_lines = []
+    for line in intersecting_lines:
+        for coord_pair in line.coords:
+            x_coord = round(coord_pair[0], 4)
+            y_coord = round(coord_pair[1], 4)
+
+            coord = (x_coord, y_coord)
+
+            # If line contains node point it doesn't need to be split
+            if node_point == coord:
+                continue
+
+            segment = shapely.to_wkt(shapely.LineString([coord, node_point]))
+
+            exploded_lines.append(segment)
+
+    return exploded_lines
+
+
+def _prepare_node_dataframe(
+    node_df: pl.LazyFrame,
+    line_df: pl.LazyFrame,
+    line_array: npt.NDArray[shapely.LineString],
+) -> pl.LazyFrame:
+    """Prepare the node dataframe for analysis.
+
+    The dataframe returned from this function contains all intersection nodes and the
+    lines that intersect each node.
+    """
+    melt = line_df.melt(id_vars="geometry", value_vars=["point_1", "point_2"]).select(
+        pl.all().exclude("value"),
+        pl.col("value").list.get(0).round(4).alias("x_coord"),
+        pl.col("value").list.get(1).round(4).alias("y_coord"),
+    )
+
+    query = (
+        node_df.join(other=melt, on=["x_coord", "y_coord"], how="left")
+        .with_columns(  # Convert all shapely objects to string
+            pl.col("geometry_right").map_elements(lambda line: shapely.to_wkt(line)),
+        )
+        .select(["geometry", "geometry_right", "num_coords"])
+        .group_by(pl.col("geometry"))
+        .agg(
+            pl.col("geometry_right").alias("node_lines"),  # Group lines into list
+            pl.col("num_coords")
+            .mean()
+            .cast(pl.Int8)  # Will always be a whole number
+            .alias("num_coords"),  # Count number of lines
+        )
+        .with_columns(  # Buffer points
+            pl.col("geometry")
+            .map_elements(
+                lambda point: shapely.to_wkt(
+                    shapely.buffer(shapely.from_wkt(point), 1, quad_segs=16)
+                ),
+            )
+            .alias("buffer")
+        )
+        .with_columns(  # Filter nodes with count of 1
+            pl.when(pl.col("num_coords") == 1)
+            .then(
+                pl.struct(["geometry", "buffer"]).map_elements(
+                    lambda struct: _filter_endpoint_nodes(
+                        shapely.from_wkt(struct["geometry"]),
+                        shapely.from_wkt(struct["buffer"]),
+                        line_array,
+                    ),
+                    return_dtype=pl.List(pl.Utf8),
+                )
+            )
+            .otherwise(pl.col("node_lines"))
+            .alias("node_lines")
+        )
+        .with_columns(pl.col("node_lines").list.len().alias("num_lines"))
+        .select("geometry", "buffer", "node_lines", "num_lines")
+        .filter(pl.col("num_lines") > 0)
+    )
+
+    return query
+
+
 def _create_analysis_dataframe(
-    node_dataframe: pl.LazyFrame, line_dataframe: pl.LazyFrame, angle_buffer: float
+    node_df: pl.LazyFrame,
+    line_df: pl.LazyFrame,
+    line_array: npt.NDArray[shapely.LineString],
+    angle_buffer: float,
 ) -> pl.LazyFrame:
     """Create the analysis dataframe.
 
@@ -88,8 +200,9 @@ def _create_analysis_dataframe(
     this would likely take longer if the dataframe was broken up into smaller parts.
 
     Args:
-        node_dataframe: The dataframe containing valid intersection nodes.
-        line_dataframe: The dataframe containing the line features.
+        node_df: The dataframe containing valid intersection nodes.
+        line_df: The dataframe containing the line features.
+        line_array: Numpy array containing the line features.
         angle_buffer: The size of the buffer around 90 and 180 degrees for classifying
           X, Y, and T junctions. For example, a buffer size of 10 means a valid T
           intersection will have an angle between 170 and 190 degrees, and the other two
@@ -100,47 +213,24 @@ def _create_analysis_dataframe(
         intersection angles in degrees, the number of lines entering the node, the node
         type, and the regularity type.
     """
-    # Melt lines dataframe to join with nodes
-    melt = line_dataframe.melt(
-        id_vars="geometry", value_vars=["point_1", "point_2"]
-    ).select(
-        pl.all().exclude("value"),
-        pl.col("value").list.get(0).alias("x_coord"),
-        pl.col("value").list.get(1).alias("y_coord"),
-    )
+    pre_analysis = _prepare_node_dataframe(node_df, line_df, line_array)
 
     # Join nodes and lines, aggregate linestrings into lists
-    node_analysis = (
-        node_dataframe.join(other=melt, on=["x_coord", "y_coord"], how="left")
-        .with_columns(  # Convert all shapely objects to string
-            pl.col("geometry_right").map_elements(lambda line: shapely.to_wkt(line)),
-        )
-        .select(["geometry", "geometry_right"])
-        .group_by(pl.col("geometry"))
-        .agg(pl.col("geometry_right").alias("lines"))  # Group lines into list
-        .with_columns(  # Get buffer geometry as string
-            pl.col("geometry")
-            .map_elements(
-                lambda point: shapely.to_wkt(shapely.buffer(point, 1, quad_segs=16))
-            )
-            .alias("polygon")
-        )
-        .select(["geometry", "lines", "polygon"])
-        .with_columns(  # Calculate node angles
-            pl.struct(["polygon", "lines"])  # Grab geometry columns, as strings
+    query = (
+        pre_analysis.with_columns(  # Calculate node angles
+            pl.struct(["buffer", "node_lines"])  # Grab geometry columns, as strings
             .map_elements(
                 lambda struct: calculate_node_angles(
-                    struct["polygon"], struct["lines"]
+                    struct["buffer"], struct["node_lines"]
                 ),
                 return_dtype=pl.List(pl.Float64),
             )
             .list.eval(pl.element().round(2), parallel=True)
             .alias("degrees")
         )
-        .with_columns(pl.col("degrees").list.lengths().alias("num_points"))
         .with_columns(  # Classify each node type as X, T, Y, or #
             pl.when(  # X junction
-                (pl.col("num_points") == 4)
+                (pl.col("num_lines") == 4)
                 & (
                     pl.col("degrees")
                     .list.eval(
@@ -152,7 +242,7 @@ def _create_analysis_dataframe(
             )
             .then(pl.lit("X", dtype=pl.Utf8))
             .when(  # T junction
-                (pl.col("num_points") == 3)
+                (pl.col("num_lines") == 3)
                 & (
                     pl.col("degrees")
                     .list.eval(
@@ -167,7 +257,7 @@ def _create_analysis_dataframe(
             )
             .then(pl.lit("T", dtype=pl.Utf8))
             .when(  # Y junction
-                (pl.col("num_points") == 3)
+                (pl.col("num_lines") == 3)
                 & ~(  # Simply negate the T junction calculation
                     pl.col("degrees")
                     .list.eval(
@@ -208,14 +298,14 @@ def _create_analysis_dataframe(
         )
         .with_columns(  # Irregular nodes have "line" running through (180 angle)
             pl.when(pl.col("regularity") == "irregular")
-            .then(pl.col("num_points") - 1)
-            .otherwise(pl.col("num_points"))
-            .alias("num_points")
+            .then(pl.col("num_lines") - 1)
+            .otherwise(pl.col("num_lines"))
+            .alias("num_lines")
         )
-        .select(["geometry", "degrees", "num_points", "node_type", "regularity"])
+        .select(["geometry", "degrees", "num_lines", "node_type", "regularity"])
     )
 
-    return node_analysis
+    return query
 
 
 def _create_node_summary_row(
@@ -224,8 +314,9 @@ def _create_node_summary_row(
     query = analysis_df.select(
         [
             pl.lit(row_name).alias("terrain"),
-            pl.col("num_points").mean().round(3).alias("n_bar"),
-            pl.col("num_points").std().round(3).alias("n_bar_std"),
+            pl.col("num_lines").mean().round(3).alias("n_bar"),
+            pl.col("num_lines").std().round(3).alias("n_bar_std"),
+            pl.col("num_lines").count().alias("node_count"),
             (
                 pl.col("node_type").filter(pl.col("node_type") == "T").count()
                 / pl.col("node_type").count()
@@ -300,16 +391,42 @@ def do_analysis(
 
     # Clip lines to the node buffer. This uses geopandas
     clipped_lines = clip_lines_to_points(
-        nodes_df.select("geometry").collect().to_numpy(), line_features_array
+        shapely.from_wkt(nodes_df.select("geometry").collect().to_numpy()),
+        line_features_array,
     )
 
     # Create lines dataframe from our shortened lines
     lines_df = create_lines_dataframe(clipped_lines)
 
     # Perform analysis and summarize
-    node_analysis_df = _create_analysis_dataframe(nodes_df, lines_df, angle_buffer)
+    node_analysis_df = _create_analysis_dataframe(
+        nodes_df, lines_df, clipped_lines, angle_buffer
+    )
     summary_df = _create_node_summary_row(
         node_analysis_df, angle_buffer, feature_path.stem
     )
 
     return summary_df, node_analysis_df
+
+
+def main() -> None:
+    """Test."""
+    from pathlib import Path
+
+    from symbolic_plane_analysis.files import find_geojson
+
+    directory = Path(
+        "~/School/Graduate/Projects/Symbolic_Plane_Analysis/geojson/lines/"
+    )
+
+    geojson_files = sorted(find_geojson(directory))
+
+    data = geojson_files[0]
+
+    summary_df, node_analysis_df = do_analysis(data, 10)
+
+    print(summary_df.collect())
+
+
+if __name__ == "__main__":
+    main()
