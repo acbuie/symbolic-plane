@@ -1,36 +1,45 @@
-[tool.poetry]
+[project]
 name = "symbolic-plane-analysis"
 version = "0.1.0"
-description = ""
-authors = ["acbuie <aidancbuie@gmail.com>"]
+description = "Analysis program for calculating parameters from fracture mosaics."
+authors = [
+    { name = "acbuie", email = "aidancbuie@gmail.com" }
+]
+dependencies = [
+    "rich>=13.7.1",
+    "matplotlib>=3.9.0",
+    "geopandas>=1.0.0",
+    "shapely>=2.0.4",
+    "polars[numpy,pandas]>=0.20.31",
+]
 readme = "README.md"
-packages = [{include = "symbolic_plane_analysis", from = "src"}]
+requires-python = ">= 3.12"
 
-[tool.poetry.dependencies]
-python = "^3.11"
-shapely = "^2.0.1"
-polars = {extras = ["numpy", "pandas"], version = "^0.19.6"}
-geopandas = "^0.14.0"
-rich = "^13.6.0"
-
-[tool.poetry.group.dev.dependencies]
-ruff = "^0.1.4"
-mypy = "^1.5.1"
-pytest = "^7.4.2"
-pre-commit = "^3.5.0"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
-
-[tool.poetry.scripts]
+[project.scripts]
 cli = "symbolic_plane_analysis.main:main"
 
-[tool.black]
-target-version = ["py311"]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = [
+    "pytest>=8.2.2",
+    "mypy>=1.10.1",
+    "ruff>=0.4.10",
+    "pre-commit>=3.7.1",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/symbolic_plane_analysis"]
 
 [tool.mypy]
 strict = true
+pretty = true
 
 [[tool.mypy.overrides]]
 module = ["shapely", "geopandas"]
